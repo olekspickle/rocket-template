@@ -1,5 +1,4 @@
 use rocket::{catch, get, Request};
-
 use rocket_dyn_templates::{context, Template};
 
 fn styles() -> String {
