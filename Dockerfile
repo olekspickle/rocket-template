@@ -1,39 +1,41 @@
 # Run detached and remove container when it stopped
-# docker build -t rocket-template .
-# docker run -dp 3000:3000 --rm --name server rocket-template
+# Warning: Docker logs can mess up current terminal pane if not detached
+#
+# docker build -t rocket-template:local .
+# docker run -d -p 8000:8000 --rm --name rocket-template --hostname rocket-template
 
-FROM rust:1.66 as build
+############################CACHE##############################################
 
-# create a new empty shell project
-RUN USER=root cargo new --bin rocket-template
-WORKDIR /rocket-template
+FROM docker.io/rust:1.68.2-slim-bullseye AS builder
 
-# copy over your manifests
-COPY Cargo.lock ./Cargo.lock
-COPY Cargo.toml ./Cargo.toml
-COPY Rocket.toml ./Rocket.toml
+# it is common to name cached image `build` but this messes up
+# rocket's fileserver which is configured in compile-time,
+# so the build image and resulting image WORKDIR should match
+WORKDIR /app
 
+# copy the project
+COPY . .
 
-# this build step will cache your dependencies
-RUN cargo build --release
-RUN rm src/*.rs
+# 1. install stable Rust
+# 2. run release build with cached rustup, cargo registry and target build artifacts
+# 3. copy release binary with compressed debug symbols to the root
+RUN --mount=type=cache,target=/app/target \
+    --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/usr/local/rustup \
+    set -eux; \
+	rustup install stable; \
+    cargo build --release; \
+    objcopy --compress-debug-sections target/release/rocket-template ./rocket-template
 
-# copy your source tree
-COPY src src
-# copy static files like templates and styles
-COPY static static
+################################################################################
 
-# build for release
-RUN cargo build --release
+FROM docker.io/debian:bullseye-slim
 
-# our final slim base
-FROM debian:buster-slim
+WORKDIR /app
 
-# copy the build artifact from the build stage
-COPY --from=build /rocket-template/target/release/rocket-template .
-COPY --from=build /rocket-template/static static
-COPY --from=build /rocket-template/Rocket.toml .
-EXPOSE 8000
-
-# set the startup command to run your binary
-CMD ["./rocket-template"]
+# copy serer files
+COPY --from=builder /app/rocket-template ./rocket-template
+COPY --from=builder /app/static ./static
+COPY --from=builder /app/Rocket.toml ./Rocket.toml
+CMD ./rocket-template
